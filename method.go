@@ -44,7 +44,13 @@ func (method Method) String() (str string) {
 	return enum2str.String(method, "unknown", "GET", "POST", "PUT", "PATCH", "DELETE")
 }
 
-func (method *Method) MarshalJSON() (data []byte, err error) {
+// MarshalJSON uses a value receiver (matching MarshalYAML) so it applies
+// even when a Method value is embedded non-addressably in another struct
+// (e.g. json.Marshal(someStructValue) without taking its address) --
+// confirmed necessary: a pointer-receiver MarshalJSON is silently skipped
+// by encoding/json for non-addressable values, falling back to encoding
+// the raw uint8 instead of the method name.
+func (method Method) MarshalJSON() (data []byte, err error) {
 	return json.Marshal(method.String())
 }
 

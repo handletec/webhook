@@ -42,7 +42,10 @@ func (at AuthType) String() (str string) {
 	return enum2str.String(at, "unknown", "none", "basic", "bearer", "token")
 }
 
-func (at *AuthType) MarshalJSON() (data []byte, err error) {
+// MarshalJSON uses a value receiver (matching MarshalYAML) so it applies
+// even when an AuthType value is embedded non-addressably in another
+// struct -- see the identical rationale on Method.MarshalJSON in method.go.
+func (at AuthType) MarshalJSON() (data []byte, err error) {
 	return json.Marshal(at.String())
 }
 

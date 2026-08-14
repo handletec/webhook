@@ -16,11 +16,14 @@ limitations under the License.
 package webhook
 
 import (
+	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -157,6 +160,65 @@ func (whs WebHooks) MarshalYAML() (any, error) {
 	return out, nil
 }
 
+func (whs WebHooks) MarshalJSON() ([]byte, error) {
+	out := make(map[string][]*WebHook, len(whs))
+	for m, hooks := range whs {
+		if m == 0 || len(hooks) == 0 {
+			continue
+		}
+		key := m.String()
+		if key == "" || key == "unknown" {
+			continue
+		}
+		out[key] = hooks
+	}
+	return json.Marshal(out)
+}
+
+// parseMethodKey accepts both canonical method names ("POST") and legacy
+// raw-integer-string keys ("2") for backward compatibility with output
+// produced by the earlier, broken default encoding/json map-key handling
+// (Go only consults MarshalJSON for map values, not keys, unless the key
+// type implements encoding.TextMarshaler, which Method does not -- so a
+// bare map[Method][]*WebHook serialized with the stdlib default would have
+// emitted raw integer keys).
+func parseMethodKey(key string) (Method, error) {
+	var m Method
+	if err := setMethodFromString(&m, key); err == nil && m != 0 {
+		return m, nil
+	}
+	n, convErr := strconv.Atoi(key)
+	if convErr != nil || n < int(MethodGet) || n > int(MethodDelete) {
+		return 0, fmt.Errorf("unsupported method key %q", key)
+	}
+	return Method(n), nil
+}
+
+func (whs *WebHooks) UnmarshalJSON(data []byte) error {
+	var raw map[string][]*WebHook
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("webhooks: json decode: %w", err)
+	}
+
+	result := make(WebHooks)
+	for key, hooks := range raw {
+		m, err := parseMethodKey(key)
+		if err != nil {
+			return fmt.Errorf("webhooks: %w", err)
+		}
+		for _, h := range hooks {
+			if h == nil {
+				continue
+			}
+			if !existsByAddress(result[m], h.Address) {
+				result[m] = append(result[m], h)
+			}
+		}
+	}
+	*whs = result
+	return nil
+}
+
 func (whs *WebHooks) UnmarshalYAML(n *yaml.Node) error {
 	result := make(WebHooks)
 
@@ -238,7 +300,14 @@ func (whs *WebHooks) UnmarshalYAML(n *yaml.Node) error {
 }
 
 // Send - sends the request to all addresses for a given method (concurrently)
+// using context.Background(). See SendContext for the context-aware form.
 func (whs WebHooks) Send(method Method, tlsCfg *tls.Config, opts ...ReqOpt) error {
+	return whs.SendContext(context.Background(), method, tlsCfg, opts...)
+}
+
+// SendContext sends the request to all addresses for a given method
+// (concurrently), using ctx for cancellation and deadlines.
+func (whs WebHooks) SendContext(ctx context.Context, method Method, tlsCfg *tls.Config, opts ...ReqOpt) error {
 	hooks := whs[method]
 	if len(hooks) == 0 {
 		return nil
@@ -257,11 +326,24 @@ func (whs WebHooks) Send(method Method, tlsCfg *tls.Config, opts ...ReqOpt) erro
 		return err
 	}
 
-	return fanout(hooks, tlsCfg, spec.body, spec.query, spec.headers, runtime.GOMAXPROCS(0)*4)
+	limit := spec.concurrency
+	if limit <= 0 {
+		limit = runtime.GOMAXPROCS(0) * 4
+	}
+
+	return fanout(ctx, hooks, tlsCfg, spec.body, spec.query, spec.headers, limit)
 }
 
-// Broadcast - sends the request to all addresses across all methods (concurrently)
+// Broadcast - sends the request to all addresses across all methods
+// (concurrently) using context.Background(). See BroadcastContext for the
+// context-aware form.
 func (whs WebHooks) Broadcast(tlsCfg *tls.Config, opts ...ReqOpt) error {
+	return whs.BroadcastContext(context.Background(), tlsCfg, opts...)
+}
+
+// BroadcastContext sends the request to all addresses across all methods
+// (concurrently), using ctx for cancellation and deadlines.
+func (whs WebHooks) BroadcastContext(ctx context.Context, tlsCfg *tls.Config, opts ...ReqOpt) error {
 	// flatten once
 	total := 0
 	for _, list := range whs {
@@ -288,7 +370,12 @@ func (whs WebHooks) Broadcast(tlsCfg *tls.Config, opts ...ReqOpt) error {
 		return err
 	}
 
-	return fanout(flat, tlsCfg, spec.body, spec.query, spec.headers, runtime.GOMAXPROCS(0)*4)
+	limit := spec.concurrency
+	if limit <= 0 {
+		limit = runtime.GOMAXPROCS(0) * 4
+	}
+
+	return fanout(ctx, flat, tlsCfg, spec.body, spec.query, spec.headers, limit)
 }
 
 // ApplyAuth - applies credentials to every hook using the provided binder.
@@ -308,12 +395,14 @@ func (whs *WebHooks) ApplyAuth(binder AuthBinderFunc) error {
 			}
 
 			// Let the caller bind secrets however they like (may set plaintext or call Set*).
+			// binder is called without holding h.mu -- it may itself call the
+			// public, locking Set* methods.
 			if err := binder(h); err != nil {
-				errs = append(errs, fmt.Errorf("%s %s: %w", h.Method.String(), h.Address, err))
+				errs = append(errs, fmt.Errorf("%s %s: %w", h.Method.String(), redactURL(h.Address), err))
 				continue
 			}
 
-			// 🔒 mutate under exclusive lock
+			// mutate under exclusive lock
 			h.mu.Lock()
 
 			// Canonicalize header (binder may have set it).
@@ -322,38 +411,23 @@ func (whs *WebHooks) ApplyAuth(binder AuthBinderFunc) error {
 			}
 
 			// Compile & wipe any plaintext creds set via config fields.
-			if err := h.finalizeAuthFromConfig(); err != nil {
+			if err := h.finalizeAuthLocked(); err != nil {
 				h.mu.Unlock()
-				errs = append(errs, fmt.Errorf("%s %s: %w", h.Method.String(), h.Address, err))
+				errs = append(errs, fmt.Errorf("%s %s: %w", h.Method.String(), redactURL(h.Address), err))
 				continue
 			}
 
-			// Validate required runtime values are present.
 			switch h.AuthType {
-			case AuthTypeBasic:
-				if h.basicAuthValue == "" {
-					errs = append(errs, fmt.Errorf("basic auth missing credentials for %s", h.Address))
-				}
-				// Force standard header for Basic.
+			case AuthTypeBasic, AuthTypeBearer:
+				// Force standard header for Basic/Bearer.
 				h.AuthHeaderName = http.CanonicalHeaderKey("authorization")
+			}
 
-			case AuthTypeBearer:
-				if h.bearerAuthValue == "" {
-					errs = append(errs, fmt.Errorf("bearer token missing for %s", h.Address))
-				}
-				// Force standard header for Bearer.
-				h.AuthHeaderName = http.CanonicalHeaderKey("authorization")
-
-			case AuthTypeToken:
-				if h.AuthHeaderName == "" || h.tokenValue == "" {
-					errs = append(errs, fmt.Errorf("token auth requires header and value for %s", h.Address))
-				}
-
-			case AuthTypeNone, 0:
-				// no credentials required
-
-			default:
-				errs = append(errs, fmt.Errorf("unsupported auth type %q for %s", h.AuthType.String(), h.Address))
+			// Delivery-readiness check, shared with SendContext's fail-closed
+			// gate -- surfaces the same error class instead of a hand-copied
+			// per-type switch.
+			if err := authReady(h); err != nil {
+				errs = append(errs, fmt.Errorf("%s %s: %w", h.Method.String(), redactURL(h.Address), err))
 			}
 
 			// Scrub non-active derived values to avoid stale leftovers.

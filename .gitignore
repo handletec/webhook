@@ -2,3 +2,44 @@
 go.work
 go.work.sum
 *.txt
+
+# hts-ai-ops workspace (added by hts-context)
+.hts-context/compact.md
+.hts-context/files.md
+.hts-context/summary.md
+.hts-context/manifest.json
+.hts-context/prompts/
+.hts-context/records/
+.claude/
+.codex/
+.cursor/
+.windsurf/
+.continue/
+.aider*
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+build/
+dist/
+tmp/
+.cache/
+*.log
+*.backup.*
+
+# HandleTec / AI tooling — local-only by default
+.hts-context/
+.agent-policy.yml
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+
+# Engine/tool local state
+.claude/
+.codex/
+.cursor/
+.windsurf/
+.continue/
+.aider*

@@ -1,7 +1,7 @@
-github.com/svicknesh/enum2str v1.0.1 h1:gw58ZtbIMeWNDNs3YqqHbSekUJXRHyPF2eqgCGhaDCA=
-github.com/svicknesh/enum2str v1.0.1/go.mod h1:YeTvM+UrHkpqK38CrkEoNjXJp7fQYE7PFnkDsBJnBgo=
-github.com/svicknesh/httpclient v1.4.0 h1:yNEHIE5Ov4xiIbglGcPsKu/XW3N4WhgysKJQbXlb9NU=
-github.com/svicknesh/httpclient v1.4.0/go.mod h1:e10mYjnzuOwj2B+k0A78WBShN8W+eGRq0GbwQRO8Juo=
+github.com/svicknesh/enum2str v1.0.2 h1:+BCZ0kiKHPn5KVnM5dOs/frSKJh4yGSzEHyP9AIcqvg=
+github.com/svicknesh/enum2str v1.0.2/go.mod h1:YeTvM+UrHkpqK38CrkEoNjXJp7fQYE7PFnkDsBJnBgo=
+github.com/svicknesh/httpclient v1.7.1 h1:gnf90gFFSkOR/YLxW53bckHKjisYS7i3dX33rPbKhWg=
+github.com/svicknesh/httpclient v1.7.1/go.mod h1:e10mYjnzuOwj2B+k0A78WBShN8W+eGRq0GbwQRO8Juo=
 golang.org/x/sync v0.17.0 h1:l60nONMj9l5drqw6jlhIELNv9I0A4OFgRsG9k2oT9Ug=
 golang.org/x/sync v0.17.0/go.mod h1:9KTHXmSnoGruLpwFjVSX0lNNA75CykiMECbovNTZqGI=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=

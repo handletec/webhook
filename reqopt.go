@@ -17,20 +17,17 @@ package webhook
 
 import (
 	"encoding/json"
+	"fmt"
 )
 
 type reqSpec struct {
-	body    []byte
-	query   Query
-	headers Headers
+	body        []byte
+	query       Query
+	headers     Headers
+	concurrency int
 }
 
 func (s *reqSpec) validate() error {
-	/*
-		if s.body != nil && s.query != nil && len(s.query) > 0 {
-			return fmt.Errorf("cannot specify both body and query")
-		}
-	*/
 	if s.headers == nil {
 		s.headers = NewHeaders() // your default UA, etc.
 	}
@@ -39,9 +36,12 @@ func (s *reqSpec) validate() error {
 
 type ReqOpt func(*reqSpec) error
 
-// WithData - body payload
+// WithData - body payload. The slice is copied immediately when this
+// function is called (not deferred to send time), so the caller may
+// safely mutate or reuse the original slice after WithData returns.
 func WithData(b []byte) ReqOpt {
-	return func(s *reqSpec) error { s.body = b; return nil }
+	cp := append([]byte(nil), b...)
+	return func(s *reqSpec) error { s.body = cp; return nil }
 }
 
 func WithJSON(v any) ReqOpt {
@@ -55,12 +55,31 @@ func WithJSON(v any) ReqOpt {
 	}
 }
 
-// WithQuery - query parameters
+// WithQuery - query parameters. The url.Values are cloned immediately when
+// this function is called, so the caller may safely mutate the original
+// after WithQuery returns.
 func WithQuery(q Query) ReqOpt {
-	return func(s *reqSpec) error { s.query = q; return nil }
+	cp := cloneQuery(q)
+	return func(s *reqSpec) error { s.query = cp; return nil }
 }
 
-// WithHeaders - headers for the HTTP
+// WithHeaders - headers for the HTTP request. The headers are cloned
+// immediately when this function is called, so the caller may safely
+// mutate the original after WithHeaders returns.
 func WithHeaders(h Headers) ReqOpt {
-	return func(s *reqSpec) error { s.headers = h; return nil }
+	cp := h.Clone()
+	return func(s *reqSpec) error { s.headers = cp; return nil }
+}
+
+// WithConcurrency overrides the default fan-out concurrency
+// (runtime.GOMAXPROCS(0)*4) used by Send/Broadcast and their Context
+// variants.
+func WithConcurrency(n int) ReqOpt {
+	return func(s *reqSpec) error {
+		if n <= 0 {
+			return fmt.Errorf("concurrency must be positive, got %d", n)
+		}
+		s.concurrency = n
+		return nil
+	}
 }

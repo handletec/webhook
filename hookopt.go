@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type HookOpt func(*WebHook) error
@@ -66,6 +67,32 @@ func WithToken(headerName, value string) HookOpt {
 		h.AuthType = AuthTypeToken
 		h.AuthHeaderName = http.CanonicalHeaderKey(headerName)
 		h.tokenValue = value
+		return nil
+	}
+}
+
+// WithTimeout overrides the default per-request timeout (15s) used when
+// dispatching this hook.
+func WithTimeout(d time.Duration) HookOpt {
+	return func(h *WebHook) error {
+		if d <= 0 {
+			return fmt.Errorf("timeout must be positive, got %v", d)
+		}
+		h.timeout = d
+		return nil
+	}
+}
+
+// WithSuccessRange overrides the default success range (2xx) used to
+// determine whether a response counts as a successful delivery. Requires
+// 100 <= min <= max <= 599.
+func WithSuccessRange(min, max int) HookOpt {
+	return func(h *WebHook) error {
+		if min < 100 || max > 599 || min > max {
+			return fmt.Errorf("invalid success range [%d,%d]: require 100 <= min <= max <= 599", min, max)
+		}
+		h.successMin = min
+		h.successMax = max
 		return nil
 	}
 }
